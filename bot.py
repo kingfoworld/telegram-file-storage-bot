@@ -1,6 +1,7 @@
 import os
 
 import telebot
+from flask import Flask, request
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -14,8 +15,10 @@ def required_env(name: str) -> str:
 BOT_TOKEN = required_env("BOT_TOKEN")
 CHANNEL_ID = int(required_env("CHANNEL_ID"))
 BOT_USERNAME = required_env("BOT_USERNAME").lstrip("@")
+WEBHOOK_PATH = "/telegram"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
 # These dictionaries are intentionally kept in memory, matching the original bot.
 # A service restart clears active batches and remembered language choices.
@@ -221,6 +224,39 @@ def handle_incoming_files(message):
         bot.reply_to(message, f"❌ Error: {error}")
 
 
+@app.get("/")
+def health_check():
+    return {"status": "ok", "service": "telegram-file-storage-bot"}
+
+
+@app.post(WEBHOOK_PATH)
+def telegram_webhook():
+    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
+
+
+def configure_webhook():
+    external_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL")
+    if not external_url:
+        print("Webhook URL is not available yet; HTTP server will still start.")
+        return
+
+    webhook_url = f"{external_url.rstrip('/')}{WEBHOOK_PATH}"
+    bot.remove_webhook()
+    bot.set_webhook(url=webhook_url)
+    print(f"✅ Telegram webhook configured: {webhook_url}")
+
+
+configure_webhook()
+
+
 if __name__ == "__main__":
-    print("⚡ মাল্টি-ল্যাঙ্গুয়েজ পাবলিক ব্যাচ বট সফলভাবে চালু হয়েছে...")
-    bot.infinity_polling(timeout=30, long_polling_timeout=30, skip_pending=True)
+    if os.getenv("POLLING_MODE", "false").lower() == "true":
+        bot.remove_webhook()
+        print("⚡ মাল্টি-ল্যাঙ্গুয়েজ পাবলিক ব্যাচ বট polling mode‑এ চালু হয়েছে...")
+        bot.infinity_polling(timeout=30, long_polling_timeout=30, skip_pending=True)
+    else:
+        port = int(os.getenv("PORT", "10000"))
+        print("⚡ মাল্টি-ল্যাঙ্গুয়েজ পাবলিক ব্যাচ বটের webhook server চালু হয়েছে...")
+        app.run(host="0.0.0.0", port=port)
